@@ -14,6 +14,7 @@ class PetView(APIView, PageNumberPagination):
         serializer.is_valid(raise_exception=True)
 
         group_data = serializer.validated_data.pop("group")
+        traits_data = serializer.validated_data.pop("traits")
 
         group_obj = Group.objects.filter(
                 scientific_name__iexact=group_data["scientific_name"]
@@ -24,36 +25,26 @@ class PetView(APIView, PageNumberPagination):
 
         pet = Pet.objects.create(**serializer.validated_data, group=group_obj)
 
-        traits_data = serializer.validated_data.pop("traits")
-
         for trait in traits_data:
+            """ import ipdb; ipdb.set_trace() """
             trait_filter = Trait.objects.filter(
-                name__iexact=trait["trait_name"]
+                name__iexact=trait["name"]
             ).first()
 
             if not trait_filter:
-                new_trait = Trait.objects.create(**trait)
-                pet.traits.add(new_trait)
-                break
+                trait_filter = Trait.objects.create(**trait)
             pet.traits.add(trait_filter)
         serializer = PetSerializer(pet)
 
         return Response(serializer.data, status.HTTP_201_CREATED)
 
     def get(self, request: Request) -> Response:
-        pet = Pet.objects.all()
-        result_page = self.paginate_queryset(pet, request)
-
         if request.query_params:
-            list_trait = request.query_params.get("trait", None)
-            filter_trait = Pet.objects.filter(list_trait__exact=list_trait)
-
-            trait_result_page = self.paginate_queryset(
-                filter_trait, list_trait
-                )
-            filter_serializer = PetSerializer(trait_result_page, many=True)
-
-            return self.get_paginated_response(filter_serializer.data)
+            name_trait = request.query_params.get("trait", None)
+            pet = Pet.objects.filter(traits__name__iexact=name_trait)
+        else:
+            pet = Pet.objects.all()
+        result_page = self.paginate_queryset(pet, request)
 
         serializer = PetSerializer(result_page, many=True)
 
@@ -73,28 +64,27 @@ class PetInfoView(APIView):
         serializer.is_valid(raise_exception=True)
 
         group_data = serializer.validated_data.pop("group", None)
-
-        if group_data:
-            try:
-                for key, value in group_data.items():
-                    setattr(pet.group, key, value)
-                pet.group.save()
-            except Pet.group.RelatedObjectDoesNotExist:
-                Group.objects.create(**group_data)
-                pet.group = group_data
-                pet.group.save()
-
         traits_data = serializer.validated_data.pop("traits", None)
 
+        if group_data:
+            group_obj = Group.objects.filter(
+                scientific_name__iexact=group_data["scientific_name"]
+            ).first()
+
+            if not group_obj:
+                group_obj = Group.objects.create(**group_data)
+
+            pet.group = group_obj
+
         if traits_data:
+            traits_list = []
             for trait in traits_data:
-                trait_instance = isinstance(trait, Trait)
-                if trait_instance:
-                    for key, value in trait.items():
-                        setattr(pet.traits, key, value)
-                    pet.traits.add(trait)
-                if not trait_instance:
-                    Trait.objects.create(**trait)
+                trait_filter = Trait.objects.filter(
+                    name__iexact=trait["name"]).first()
+                if not trait_filter:
+                    trait_filter = Trait.objects.create(**trait)
+                traits_list.append(trait_filter)
+            pet.traits.set(traits_list)
 
         for key, value in serializer.validated_data.items():
             setattr(pet, key, value)
